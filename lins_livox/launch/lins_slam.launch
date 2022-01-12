@@ -1,0 +1,19 @@
+<launch>
+    <!--- Sim Time -->
+    <param name="/use_sim_time" value="true" />
+
+    <!-- <include file="$(find imu_filter_madgwick)/launch/imu_filter_madgwick.launch" /> -->
+
+    <node pkg="lins_livox" type="livox_repub" name="livox_repub" output="screen" />
+
+    <node pkg="lins_livox" type="imageProjection"    name="imageProjection"    output="screen"/>
+
+    <node pkg="lins_livox" type="fusionOdometry" name="fusionOdometry" output="screen"/>
+
+    <!-- <node pkg="lins_livox" type="featureAssociation" name="featureAssociation" output="screen"/> -->
+
+    <node pkg="lins_livox" type="mapOptmization" name="mapOptmization" output="screen" />
+
+    <node pkg="rviz" type="rviz" name="rviz" args="-d $(find lins_livox)/rviz/rviz.rviz" />
+
+</launch>
