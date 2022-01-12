@@ -1362,9 +1362,9 @@ public:
         float rollLast = atan2(NormalLast.y(), NormalLast.z());
 
         // 更新
-        transformCur[0] = (rollCurr - rollLast);
-        transformCur[1] = (pitchCurr - pitchLast);
-        transformCur[5] = (dCurr-dLast);
+        transformCur[0] = -(rollCurr - rollLast);
+        transformCur[1] = -(pitchCurr - pitchLast);
+        transformCur[5] = -(dCurr-dLast);
         updateTransformCur();
         // std::cout<<"roll = "<<transformCur[0]/PI*180<<", "<<"pitch = "<<transformCur[1]/PI*180<<std::endl;
 

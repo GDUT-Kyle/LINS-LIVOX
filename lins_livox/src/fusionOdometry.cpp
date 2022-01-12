@@ -92,6 +92,9 @@ private:
     float preTransformCurTx;
     float preTransformCurTy;
     float preTransformCurTz;
+    float preTransformCurVx;
+    float preTransformCurVy;
+    float preTransformCurVz;
 
     FilterState TransformSum;
     FilterState TransformSumLast;
@@ -210,6 +213,9 @@ public:
         preTransformCurTx = 0.0;
         preTransformCurTy = 0.0;
         preTransformCurTz = 0.0;
+        preTransformCurVx = 0.0;
+        preTransformCurVy = 0.0;
+        preTransformCurVz = 0.0;
     }
     // 析构函数
     ~fusionOdometry(){}
@@ -649,18 +655,13 @@ public:
             un_acc_last = un_acc_next;
             un_gyr_last = un_gyr_next;
         }
-        // std::cout<<"state_tmp.rn_ : "<<state_tmp.rn_.transpose()<<std::endl;
-        // TransformSum = state_tmp;
-        preTransformCur.rn_ = state_tmp.qbn_.inverse()*(state_tmp.rn_-TransformSumLast.rn_);
-        preTransformCur.vn_ = state_tmp.qbn_.inverse()*(state_tmp.vn_-TransformSumLast.vn_);
-        preTransformCur.qbn_ = (state_tmp.qbn_ * TransformSumLast.qbn_.inverse()).normalized();
 
-        // std::cout<<"preTransformCur.qbn_ : "<<preTransformCur.qbn_.coeffs().transpose()<<std::endl;
-
+        preTransformCurImu.rn_ = state_tmp.qbn_.inverse()*(state_tmp.rn_-TransformSumLast.rn_);
+        preTransformCurImu.vn_ = state_tmp.qbn_.inverse()*state_tmp.vn_;
+        preTransformCurImu.qbn_ = (state_tmp.qbn_ * TransformSumLast.qbn_.inverse()).normalized();
+        preTransformCur = preTransformCurImu;
         updateTransformCurTmp();
         updateTransformCur();
-
-        preTransformCurImu = preTransformCur;
     }
 
     void updateInitialGuess(){
@@ -813,6 +814,9 @@ public:
         preTransformCurrRy = Angle.angle() * Angle.axis().y();
         preTransformCurrRz = Angle.angle() * Angle.axis().z();
 
+        preTransformCurVx = preTransformCur.vn_.x();
+        preTransformCurVy = preTransformCur.vn_.y();
+        preTransformCurVz = preTransformCur.vn_.z();
         // std::cout<<"rotation : ("<<preTransformCurrRx<<", "<<preTransformCurrRy<<", "<<preTransformCurrRz<<")"<<std::endl;
     }
 
@@ -951,9 +955,9 @@ public:
         dpitch = pitchCurr - pitchLast;
         dtz = dCurr-dLast;
 
-        preTransformCurrRx = droll;
-        preTransformCurrRy = dpitch;
-        preTransformCurTz = dtz;
+        preTransformCurrRx = -droll;
+        preTransformCurrRy = -dpitch;
+        preTransformCurTz = -dtz;
         updateTransformCur();
         
         // 更新preTransformCur
@@ -1012,7 +1016,6 @@ public:
         TransformSum.rn_ = TransformSum.rn_ + TransformSum.qbn_ * preTransformCur.rn_;
         TransformSum.qbn_ = TransformSum.qbn_ * preTransformCur.qbn_;
         TransformSum.vn_ = TransformSum.qbn_ * preTransformCur.vn_;
-        // std::cout<<"TransformSum : "<<TransformSum.vn_.transpose()<<std::endl;
 
         TransformSumLast = TransformSum;
     }
