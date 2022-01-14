@@ -119,12 +119,12 @@ extern const float th_dist = 0.2;
 
 extern const float DISTANCE_SQ_THRESHOLD = 25.0;
 
-extern const float ext_livox[] = {0.0, 0.0, 0.0, 0.0, 0.07, 0.0};
+extern const float ext_livox[] = {0.0, 0.0, 0.0, 0.0, 0.063, 0.0};
 
 extern const float scanPeriod = 0.1;
 extern const int systemDelay = 0;
 extern const int imuQueLength = 200;
-extern const std::string imuTopic = "/imu/data";
+extern const std::string imuTopic = "/livox/imu";
 
 extern const float sensorMountAngle = 0.0;
 extern const float segmentTheta = 1.0472; // segmentTheta=1.0472<==>60度,在imageProjection中用于判断平面

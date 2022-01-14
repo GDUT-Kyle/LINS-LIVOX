@@ -11,6 +11,8 @@
 
 #include <pcl/filters/radius_outlier_removal.h>   //半径滤波器头文件
 
+#define USE_COMPLEMENTLY_FILTER
+
 class fusionOdometry
 {
 private:
@@ -123,6 +125,10 @@ private:
     int skipFrameNum;
     int frameCount;
 
+    Eigen::Quaternionf initImuMountAngle;
+
+    // Eigen::Affine3f Ext_Livox;
+
 public:
     // 构造函数
     fusionOdometry(): nh("~")
@@ -131,7 +137,7 @@ public:
         subLaserCloud = nh.subscribe<sensor_msgs::PointCloud2>("/segmented_cloud", 1, &fusionOdometry::laserCloudHandler, this);
         subLaserCloudInfo = nh.subscribe<cloud_msgs::cloud_info>("/segmented_cloud_info", 1, &fusionOdometry::laserCloudInfoHandler, this);
         subGroundCloud = nh.subscribe<sensor_msgs::PointCloud2>("/ground_cloud", 1, &fusionOdometry::GroundCloudHandler, this);
-        subImu = nh.subscribe<sensor_msgs::Imu>(imuTopic, 50, &fusionOdometry::imuHandler, this);
+        subImu = nh.subscribe<sensor_msgs::Imu>(imuTopic, 500, &fusionOdometry::imuHandler, this);
         subPlaneEquation = nh.subscribe<std_msgs::Float64MultiArray>("/plane_equation", 1, &fusionOdometry::PlaneEqHandler, this);
 
         pubGroundDS = nh.advertise<sensor_msgs::PointCloud2>("/ground_downsize", 2);
@@ -192,6 +198,8 @@ public:
         initRotatin.setIdentity();
         initialImu = false;
 
+        initImuMountAngle.setIdentity();
+
         laserCloudOri.reset(new pcl::PointCloud<PointType>());
         coeffSel.reset(new pcl::PointCloud<PointType>());
 
@@ -216,6 +224,18 @@ public:
         preTransformCurVx = 0.0;
         preTransformCurVy = 0.0;
         preTransformCurVz = 0.0;
+
+        // Ext_Livox.setIdentity();
+        // Eigen::Vector3f Ext_trans(ext_livox[0], ext_livox[1], ext_livox[2]);
+        // Eigen::AngleAxisf rollAngle(ext_livox[3], Eigen::Vector3f::UnitX());
+        // Eigen::AngleAxisf pitchAngle(ext_livox[4], Eigen::Vector3f::UnitY());
+        // Eigen::AngleAxisf yawAngle(ext_livox[5], Eigen::Vector3f::UnitZ()); 
+        // Eigen::Quaternionf quaternion;
+        // quaternion=yawAngle*pitchAngle*rollAngle;
+        // Ext_Livox.pretranslate(Ext_trans);
+        // Ext_Livox.rotate(quaternion);
+
+
     }
     // 析构函数
     ~fusionOdometry(){}
@@ -600,17 +620,20 @@ public:
         double imuTime = 0.0;
         myImu imuTmp;
         imuBuf.getFirstTime(imuTime);
+        // 其实这里的IMU初始姿态选取有点粗暴，直接取了启动时第一个IMU数据计算姿态
         if(!initialImu)
         {
             imuBuf.getFirstMeas(imuTmp);
-            Eigen::Vector3f initEuler = imuTmp.pose.toRotationMatrix().eulerAngles(0, 1, 2);
-            Eigen::AngleAxisf rollAngle(initEuler.x(), Eigen::Vector3f::UnitX());
-            Eigen::AngleAxisf pitchAngle(initEuler.y(), Eigen::Vector3f::UnitY());
-            initRotatin = rollAngle * pitchAngle; // 仅取pitch和roll
-            TransformSum.qbn_ = initRotatin;
+            float imupitch_ = atan2(-imuTmp.acc.x(), 
+                              sqrt(imuTmp.acc.z()*imuTmp.acc.z() + 
+                              imuTmp.acc.y()*imuTmp.acc.y()));
+            float imuroll_ = atan2(imuTmp.acc.y(), imuTmp.acc.z());
+            Eigen::AngleAxisf imuPitch = Eigen::AngleAxisf(imupitch_, Eigen::Vector3f::UnitY());
+            Eigen::AngleAxisf imuRoll = Eigen::AngleAxisf(imuroll_, Eigen::Vector3f::UnitX());
+            initImuMountAngle = imuRoll * imuPitch;
             initialImu = true;
         }
-        while(imuTime <= pcl_time)
+        while(imuTime <= pcl_time && !imuBuf.empty())
         {
             imuBuf.getFirstMeas(imuTmp);
             ImuBucket.emplace_back(imuTmp);
@@ -618,8 +641,18 @@ public:
             imuBuf.getFirstTime(imuTime);
         }
         // 再从队列中取一个新的Imu测量用于中值积分
-        imuBuf.getFirstMeas(imuTmp);
-        ImuBucket.emplace_back(imuTmp);
+        if(!imuBuf.empty()) 
+        {
+            imuBuf.getFirstMeas(imuTmp);
+            ImuBucket.emplace_back(imuTmp);
+
+            // std::cout<<"acc : "<<(initImuMountAngle*imuTmp.acc).transpose()<<std::endl;
+
+            // float pitch = atan2(-imuTmp.acc.x(), sqrt(imuTmp.acc.z()*imuTmp.acc.z() + imuTmp.acc.y()*imuTmp.acc.y()));
+            // std::cout<<"pitch : "<<pitch/PI*180.0<<std::endl;
+            // float roll = atan2(imuTmp.acc.y(), imuTmp.acc.z());
+            // std::cout<<"roll : "<<roll/PI*180.0<<std::endl;
+        }
     }
 
     void prediction()
@@ -630,7 +663,8 @@ public:
         double dt = 0.0;
         FilterState state_tmp = TransformSum;
         // 加速度转到世界系
-        Eigen::Vector3f un_acc_last = state_tmp.qbn_*(ImuBucket[0].acc-state_tmp.ba_)+state_tmp.gn_;
+        // ImuBucket[0].acc = Ext_Livox.rotation() * ImuBucket[0].acc;
+        Eigen::Vector3f un_acc_last = state_tmp.qbn_*initImuMountAngle*(ImuBucket[0].acc-state_tmp.ba_)+state_tmp.gn_;
         Eigen::Vector3f un_gyr_last = ImuBucket[0].gyr - state_tmp.bw_;
         Eigen::Vector3f un_acc_next;
         Eigen::Vector3f un_gyr_next;
@@ -638,7 +672,8 @@ public:
         {
             dt = ImuBucket[i].timestamp_s - imuTime_last;
             // 加速度转到世界系
-            un_acc_next = state_tmp.qbn_*(ImuBucket[i].acc-state_tmp.ba_)+state_tmp.gn_;
+            // ImuBucket[i].acc = Ext_Livox.rotation() * ImuBucket[i].acc;
+            un_acc_next = state_tmp.qbn_*initImuMountAngle*(ImuBucket[i].acc-state_tmp.ba_)+state_tmp.gn_;
             un_gyr_next = ImuBucket[i].gyr - state_tmp.bw_;
 
             Eigen::Vector3f un_acc = 0.5*(un_acc_last + un_acc_next); // world frame
@@ -826,6 +861,7 @@ public:
         Eigen::Vector3f axisAngle(preTransformCurrRx, preTransformCurrRy, preTransformCurrRz);
         Eigen::AngleAxisf Angle = Eigen::AngleAxisf(axisAngle.norm(), axisAngle.normalized());
         preTransformCur.qbn_ = Angle;
+        preTransformCur.qbn_.normalize();
         preTransformCur.updateVelocity(float(cloudHeader.stamp.toSec()-cloudHeaderLast.stamp.toSec()));
     }
 
@@ -941,12 +977,12 @@ public:
     {
         Eigen::Vector3f NormalCurr = planeEqu.block<3, 1>(0, 0);
         float dLast = planeEqu(3, 0);
-        float pitchCurr = atan2(NormalCurr.x(), NormalCurr.z());
+        float pitchCurr = atan2(NormalCurr.x(), sqrt(1.0-NormalCurr.x()*NormalCurr.x()));
         float rollCurr = atan2(NormalCurr.y(), NormalCurr.z());
 
         Eigen::Vector3f NormalLast = planeEquLast.block<3, 1>(0, 0);
         float dCurr = planeEquLast(3, 0);
-        float pitchLast = atan2(NormalLast.x(), NormalLast.z());
+        float pitchLast = atan2(NormalLast.x(), sqrt(1.0-NormalLast.x()*NormalLast.x()));
         float rollLast = atan2(NormalLast.y(), NormalLast.z());
 
         // 更新
@@ -964,6 +1000,7 @@ public:
         Eigen::AngleAxisf rollAngle = Eigen::AngleAxisf(droll, Eigen::Vector3f::UnitX());
         Eigen::AngleAxisf pitchAngle = Eigen::AngleAxisf(dpitch, Eigen::Vector3f::UnitY());
         preTransformCur.qbn_ = rollAngle * pitchAngle;
+        preTransformCur.qbn_.normalize();
         preTransformCur.rn_.z() = dtz;
         // std::cout<<"roll = "<<droll/PI*180<<", pitch = "<<dpitch/PI*180<<", tz = "<<dtz<<std::endl;
 
@@ -1001,7 +1038,7 @@ public:
         // std::cout<<"velocity2 : "<<preTransformCurImu.vn_.transpose()<<std::endl;
         // std::cout<<"-----------------------------------------"<<std::endl;
         // 互补滤波
-        #define USE_COMPLEMENTLY_FILTER
+        // #define USE_COMPLEMENTLY_FILTER
         #ifdef USE_COMPLEMENTLY_FILTER
         float s = 0.5;
         preTransformCur.rn_ = s*preTransformCur.rn_+(1-s)*preTransformCurImu.rn_;
@@ -1158,7 +1195,9 @@ public:
             // 2. IMU积分得到的变换作为初值，进行纯点云匹配
             // 3. 将点云匹配得到的变换关系作为滤波器初值，配置滤波器的参数
             // 4. 利用前面的帧间位姿变换矫正点云的运动畸变，这里的前提是假设它是匀速运动模型
+                #ifdef USE_COMPLEMENTLY_FILTER
                 prediction();
+                #endif
                 DownSizeGroudCloud();
                 calculateSmoothness();
                 markOccludedPoints();
@@ -1215,7 +1254,7 @@ int main(int argc, char** argv)
 
     fusionOdometry FO;
 
-    ros::Rate rate(200);
+    ros::Rate rate(400);
     while (ros::ok())
     {
         FO.run();

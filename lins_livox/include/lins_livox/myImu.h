@@ -22,9 +22,9 @@ public:
 
         // std::cout<<"pose : "<<pose.toRotationMatrix().eulerAngles(0, 1, 2).transpose()<<std::endl;
 
-        acc.x() = imuIn->linear_acceleration.x;
-        acc.y() = imuIn->linear_acceleration.y;
-        acc.z() = imuIn->linear_acceleration.z;
+        acc.x() = imuIn->linear_acceleration.x * gnorm;
+        acc.y() = imuIn->linear_acceleration.y * gnorm;
+        acc.z() = imuIn->linear_acceleration.z * gnorm;
 
         gyr.x() = imuIn->angular_velocity.x;
         gyr.y() = imuIn->angular_velocity.y;
