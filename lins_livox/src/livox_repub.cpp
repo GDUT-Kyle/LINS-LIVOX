@@ -8,9 +8,11 @@ pcl::PointCloud<pcl::PointXYZRGB>::Ptr laserCloudFullResColor(
 
 Eigen::Affine3f Ext_Livox = Eigen::Affine3f::Identity();
 
+ros::Subscriber subImu;
 ros::Publisher pub_pcl_out0, pub_pcl_out1, pubLaserCloudFullRes;
 uint64_t TO_MERGE_CNT = 1; 
 constexpr bool b_dbg_line = false;
+bool initialImu = false;
 // 创建一个循环队列用于存储雷达帧
 std::vector<livox_ros_driver::CustomMsgConstPtr> livox_data;
 
@@ -111,20 +113,38 @@ void LivoxMsgCbk1(const livox_ros_driver::CustomMsgConstPtr& livox_msg_in) {
   }
 }
 
+// 订阅IMU
+void imuHandler(const sensor_msgs::Imu::ConstPtr& imuIn)
+{
+    Ext_Livox;
+    if(!initialImu)
+    {
+        float imupitch_ = atan2(-imuIn->linear_acceleration.x, 
+                          sqrt(imuIn->linear_acceleration.z*imuIn->linear_acceleration.z + 
+                          imuIn->linear_acceleration.y*imuIn->linear_acceleration.y));
+        float imuroll_ = atan2(imuIn->linear_acceleration.y, imuIn->linear_acceleration.z);
+        Eigen::AngleAxisf imuPitch = Eigen::AngleAxisf(imupitch_, Eigen::Vector3f::UnitY());
+        Eigen::AngleAxisf imuRoll = Eigen::AngleAxisf(imuroll_, Eigen::Vector3f::UnitX());
+        Ext_Livox.rotate(imuRoll * imuPitch);
+        // Ext_Livox.pretranslate();
+        initialImu = true;
+    }
+}
+
 int main(int argc, char** argv) {
   ros::init(argc, argv, "livox_repub");
   ros::NodeHandle nh;
 
   ROS_INFO("start livox_repub");
 
-  Eigen::Vector3f Ext_trans(ext_livox[0], ext_livox[1], ext_livox[2]);
-  Eigen::AngleAxisf rollAngle(ext_livox[3], Eigen::Vector3f::UnitX());
-  Eigen::AngleAxisf pitchAngle(ext_livox[4], Eigen::Vector3f::UnitY());
-  Eigen::AngleAxisf yawAngle(ext_livox[5], Eigen::Vector3f::UnitZ()); 
-  Eigen::Quaternionf quaternion;
-  quaternion=yawAngle*pitchAngle*rollAngle;
-  Ext_Livox.pretranslate(Ext_trans);
-  Ext_Livox.rotate(quaternion);
+  // Eigen::Vector3f Ext_trans(ext_livox[0], ext_livox[1], ext_livox[2]);
+  // Eigen::AngleAxisf rollAngle(ext_livox[3], Eigen::Vector3f::UnitX());
+  // Eigen::AngleAxisf pitchAngle(ext_livox[4], Eigen::Vector3f::UnitY());
+  // Eigen::AngleAxisf yawAngle(ext_livox[5], Eigen::Vector3f::UnitZ()); 
+  // Eigen::Quaternionf quaternion;
+  // quaternion=yawAngle*pitchAngle*rollAngle;
+  // Ext_Livox.pretranslate(Ext_trans);
+  // Ext_Livox.rotate(quaternion);
 
   ros::Subscriber sub_livox_msg1 = nh.subscribe<livox_ros_driver::CustomMsg>(
       "/livox/lidar", 100, LivoxMsgCbk1);
@@ -132,6 +152,8 @@ int main(int argc, char** argv) {
 
   pubLaserCloudFullRes =
       nh.advertise<sensor_msgs::PointCloud2>("/color_livox_pcl0", 100);
+
+  subImu = nh.subscribe<sensor_msgs::Imu>(imuTopic, 1, imuHandler);
 
   ros::spin();
 }

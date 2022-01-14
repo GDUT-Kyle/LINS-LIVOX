@@ -119,8 +119,6 @@ extern const float th_dist = 0.2;
 
 extern const float DISTANCE_SQ_THRESHOLD = 25.0;
 
-extern const float ext_livox[] = {0.0, 0.0, 0.0, 0.0, 0.063, 0.0};
-
 extern const float scanPeriod = 0.1;
 extern const int systemDelay = 0;
 extern const int imuQueLength = 200;
