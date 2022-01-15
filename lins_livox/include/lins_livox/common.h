@@ -148,7 +148,7 @@ extern const double gyr_w = 2.0e-5;
 extern const double lidar_m = 1.5e-3;
 extern const float gnorm = 9.805;
 
-extern const float historyKeyframeSearchRadius = 15.0;
+extern const float historyKeyframeSearchRadius = 40.0;
 extern const int   historyKeyframeSearchNum = 25;
 extern const float historyKeyframeFitnessScore = 0.8;
 

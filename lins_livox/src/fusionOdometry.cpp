@@ -624,10 +624,15 @@ public:
         if(!initialImu)
         {
             imuBuf.getFirstMeas(imuTmp);
-            float imupitch_ = atan2(-imuTmp.acc.x(), 
-                              sqrt(imuTmp.acc.z()*imuTmp.acc.z() + 
-                              imuTmp.acc.y()*imuTmp.acc.y()));
-            float imuroll_ = atan2(imuTmp.acc.y(), imuTmp.acc.z());
+            // float imupitch_ = atan2(-imuTmp.acc.x(), 
+            //                   sqrt(imuTmp.acc.z()*imuTmp.acc.z() + 
+            //                   imuTmp.acc.y()*imuTmp.acc.y()));
+            // float imuroll_ = atan2(imuTmp.acc.y(), imuTmp.acc.z());
+            int signAccZ;
+            if(imuTmp.acc.z() >= 0) signAccZ = 1;
+            else signAccZ = -1;
+            float imupitch_ = -signAccZ * asin(imuTmp.acc.x()/gnorm);
+            float imuroll_ = signAccZ * asin(imuTmp.acc.y()/gnorm);
             Eigen::AngleAxisf imuPitch = Eigen::AngleAxisf(imupitch_, Eigen::Vector3f::UnitY());
             Eigen::AngleAxisf imuRoll = Eigen::AngleAxisf(imuroll_, Eigen::Vector3f::UnitX());
             initImuMountAngle = imuRoll * imuPitch;
@@ -705,6 +710,7 @@ public:
     void TransformToStart(PointType const * const pi, PointType * const po)
     {
         // float s = 10 * (pi->intensity - int(pi->intensity));
+        // std::cout<<"s :"<<s<<std::endl;
         float s = 1.0;
         Eigen::Vector3f point(pi->x, pi->y, pi->z);
         point = Eigen::Quaternionf::Identity().slerp(s, preTransformCur.qbn_) 
@@ -1043,7 +1049,7 @@ public:
         float s = 0.5;
         preTransformCur.rn_ = s*preTransformCur.rn_+(1-s)*preTransformCurImu.rn_;
         preTransformCur.vn_ = s*preTransformCur.vn_+(1-s)*preTransformCurImu.vn_;
-        preTransformCur.qbn_ = preTransformCur.qbn_.slerp((1-s), preTransformCurImu.qbn_);
+        preTransformCur.qbn_ = preTransformCur.qbn_.slerp(0.5, preTransformCurImu.qbn_);
         #endif
     }
 

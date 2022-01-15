@@ -119,10 +119,15 @@ void imuHandler(const sensor_msgs::Imu::ConstPtr& imuIn)
     Ext_Livox;
     if(!initialImu)
     {
-        float imupitch_ = atan2(-imuIn->linear_acceleration.x, 
-                          sqrt(imuIn->linear_acceleration.z*imuIn->linear_acceleration.z + 
-                          imuIn->linear_acceleration.y*imuIn->linear_acceleration.y));
-        float imuroll_ = atan2(imuIn->linear_acceleration.y, imuIn->linear_acceleration.z);
+        // float imupitch_ = atan2(-imuIn->linear_acceleration.x, 
+        //                   sqrt(imuIn->linear_acceleration.z*imuIn->linear_acceleration.z + 
+        //                   imuIn->linear_acceleration.y*imuIn->linear_acceleration.y));
+        int signAccZ;
+        if(imuIn->linear_acceleration.z >= 0) signAccZ = 1;
+        else signAccZ = -1;
+        float imupitch_ = -signAccZ * asin(imuIn->linear_acceleration.x);
+        float imuroll_ = signAccZ * asin(imuIn->linear_acceleration.y);
+        // float imuroll_ = atan2(imuIn->linear_acceleration.y, imuIn->linear_acceleration.z);
         Eigen::AngleAxisf imuPitch = Eigen::AngleAxisf(imupitch_, Eigen::Vector3f::UnitY());
         Eigen::AngleAxisf imuRoll = Eigen::AngleAxisf(imuroll_, Eigen::Vector3f::UnitX());
         Ext_Livox.rotate(imuRoll * imuPitch);

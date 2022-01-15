@@ -69,6 +69,7 @@ private:
 
     // PointType(pcl::PointXYZI)的XYZI分别保存3个方向上的平移和一个索引(cloudKeyPoses3D->points.size())
     pcl::PointCloud<PointType>::Ptr cloudKeyPoses3D;
+    pcl::PointCloud<PointType>::Ptr cloudKeyPoses3DforLoop;
 
     //PointTypePose的XYZI保存和cloudKeyPoses3D一样的内容，另外还保存RPY角度以及一个时间值timeLaserOdometry
     // pcl::PointCloud<PointTypePose>::Ptr cloudKeyPoses6D;
@@ -281,6 +282,7 @@ mapOptimization():
 
         cloudKeyPoses3D.reset(new pcl::PointCloud<PointType>());
         cloudKeyPoses6D.reset(new pcl::PointCloud<myPointTypePose>());
+        cloudKeyPoses3DforLoop.reset(new pcl::PointCloud<PointType>());
 
         kdtreeSurroundingKeyPoses.reset(new pcl::KdTreeFLANN<PointType>());
         kdtreeHistoryKeyPoses.reset(new pcl::KdTreeFLANN<PointType>());
@@ -485,13 +487,15 @@ mapOptimization():
         std::vector<int> pointSearchIndLoop;
         std::vector<float> pointSearchSqDisLoop;
         // 关键帧位置构建kd-tree
-        kdtreeHistoryKeyPoses->setInputCloud(cloudKeyPoses3D);
+        kdtreeHistoryKeyPoses->setInputCloud(cloudKeyPoses3DforLoop);
         // 进行半径historyKeyframeSearchRadius内的邻域搜索，
         // currentRobotPosPoint：需要查询的点，这里取最新优化后的关键帧位置
         // pointSearchIndLoop：搜索完的邻域点对应的索引
         // pointSearchSqDisLoop：搜索完的每个邻域点与当前点之间的欧式距离
         // 0：返回的邻域个数，为0表示返回全部的邻域点
-        kdtreeHistoryKeyPoses->radiusSearch(currentRobotPosPoint, historyKeyframeSearchRadius, pointSearchIndLoop, pointSearchSqDisLoop, 0);
+        PointType currentPoint = currentRobotPosPoint;
+        currentPoint.z = 0.0;
+        kdtreeHistoryKeyPoses->radiusSearch(currentPoint, historyKeyframeSearchRadius, pointSearchIndLoop, pointSearchSqDisLoop, 0);
         
         closestHistoryFrameID = -1;
         // 遍历kd-tree最近临搜索到的点
@@ -499,7 +503,7 @@ mapOptimization():
             int id = pointSearchIndLoop[i];
             // 需要找到，两个时间差值大于30秒
             // 时间太短的不认为是回环
-            if (abs(cloudKeyPoses6D->points[id].time - timeLaserOdometry) > 30.0){
+            if (abs(cloudKeyPoses6D->points[id].time - timeLaserOdometry) > 60.0){
                 closestHistoryFrameID = id;
                 break;
             }
@@ -1485,6 +1489,7 @@ mapOptimization():
         PointType thisPose3D;
         myPointTypePose thisPose6D;
         Pose3 latestEstimate;
+        PointType thisPose3DforLoop;
 
         // Compute an estimate from the incomplete linear delta computed during the last update.
         isamCurrentEstimate = isam->calculateEstimate();
@@ -1513,6 +1518,10 @@ mapOptimization():
         thisPose6D.qw = q_latestEstimate.w();
         thisPose6D.time = timeLaserOdometry;
         cloudKeyPoses6D->push_back(thisPose6D);
+
+        thisPose3DforLoop = thisPose3D;
+        thisPose3DforLoop.z = 0;
+        cloudKeyPoses3DforLoop->push_back(thisPose3DforLoop);
 
         // 更新transformAftMapped[]
         if (cloudKeyPoses3D->points.size() > 1){
@@ -1681,6 +1690,10 @@ mapOptimization():
 				cloudKeyPoses3D->points[i].x = isamCurrentEstimate.at<Pose3>(i).translation().x();
 				cloudKeyPoses3D->points[i].y = isamCurrentEstimate.at<Pose3>(i).translation().y();
 				cloudKeyPoses3D->points[i].z = isamCurrentEstimate.at<Pose3>(i).translation().z();
+
+                cloudKeyPoses3DforLoop->points[i].x = isamCurrentEstimate.at<Pose3>(i).translation().x();
+                cloudKeyPoses3DforLoop->points[i].y = isamCurrentEstimate.at<Pose3>(i).translation().y();
+                cloudKeyPoses3DforLoop->points[i].z = 0.0;
 
 				cloudKeyPoses6D->points[i].x = cloudKeyPoses3D->points[i].x;
 	            cloudKeyPoses6D->points[i].y = cloudKeyPoses3D->points[i].y;
