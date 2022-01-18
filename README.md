@@ -8,25 +8,21 @@
 
 将[LINS---LiDAR-inertial-SLAM](https://github.com/ChaoqinRobotics/LINS---LiDAR-inertial-SLAM)的思路迁移到大疆Livox Horizon激光雷达上，从而实现轻量化的激光SLAM系统。
 
-- [x] 地面提取
+- [X] 地面提取
 
-  由于livox的点云不像传统旋转式机械激光雷达那样规则分布，因此我们采用[Run_based_segmentation](https://github.com/VincentCheungM/Run_based_segmentation)的地平面拟合方法进行地面提取。
+   由于livox的点云不像传统旋转式机械激光雷达那样规则分布，因此我们采用[Run_based_segmentation](https://github.com/VincentCheungM/Run_based_segmentation)的地平面拟合方法进行地面提取。
+- [X] 前端里程计关于 `pitch`，`roll`以及 `tz`的计算
 
-- [x] 前端里程计关于 `pitch`，`roll`以及 `tz`的计算
+   我们之前花了较大力气进行地面拟合和提取，得到较为准确的地面的平面方程。所以在前端部分直接通过两次扫描的地面方程进行 `pitch`，`roll`以及 `tz`的计算，然后与IMU测量进行一次互补滤波。
+- [X] 使用右扰动模型推导ICP配准的雅克比
 
-  我们之前花了较大力气进行地面拟合和提取，得到较为准确的地面的平面方程。所以在前端部分直接通过两次扫描的地面方程进行 `pitch`，`roll`以及 `tz`的计算，然后与IMU测量进行一次互补滤波。
+   LOAM和lego-loam中，关于旋转的求导相信让很多朋友困惑了很久。因此，在本项目中我们采用右扰动模型进行旋转求导。从建图效果上可以表明理论上的数学推导是没问题的，剩下的就是精度问题。
+- [X] 回环检测
 
-- [x] 使用右扰动模型推导ICP配准的雅克比
+   在后端部分已经构建好基于ISAM2的位姿图优化框架。后续会加上回环检测，已经使用基于里程计的回环检测与校正。后续计划使用[scancontext](https://github.com/irapkaist/scancontext)实现回环检测。
+- [X] 基于IESKF的LiDAR-Inertial odometry
 
-  LOAM和lego-loam中，关于旋转的求导相信让很多朋友困惑了很久。因此，在本项目中我们采用右扰动模型进行旋转求导。从建图效果上可以表明理论上的数学推导是没问题的，剩下的就是精度问题。
-
-- [x] 回环检测
-
-  在后端部分已经构建好基于ISAM2的位姿图优化框架。后续会加上回环检测，已经使用基于里程计的回环检测与校正。后续计划使用[scancontext](https://github.com/irapkaist/scancontext)实现回环检测。
-
-- [x] 基于IESKF的LiDAR-Inertial odometry
-
-  参考LINS设计一个迭代误差状态卡尔曼滤波器，用于估计前端里程计中的`yaw`, `tx`和`ty`。具体实现过程可见代码，但是代码实现可能有点繁琐。
+   参考LINS设计一个迭代误差状态卡尔曼滤波器，用于估计前端里程计中的 `yaw`, `tx`和 `ty`。具体实现过程可见代码，但是代码实现可能有点繁琐。
 
 **注：由于采用了地面提取并将地面应用于估计前端里程计，因此默认Livox与车体平行，即Livox与地面平行（或者已知Livox与车体直接的装配角度）。所以它与LEGO-LOAM一样，仅适用于车辆，不适用于手持测绘。**
 
@@ -64,17 +60,13 @@ roslaunch livox_ros_driver livox_lidar_msg.launch
 roslaunch lego_livox lins_slam.launch
 ```
 
-**广东工业大学校园测绘结果1（树木密集场景）——[视频]()**
+**广东工业大学校园测绘结果1（树木密集场景）——[视频](https://www.bilibili.com/video/BV1ka41127bV?p=1)**
 
 ![](./lins_livox/pic/gdut_trees.png)
 
-
-
-**广东工业大学校园测绘结果2（带回环场景）——[视频]()**
+**广东工业大学校园测绘结果2（带回环场景）——[视频](https://www.bilibili.com/video/BV1ka41127bV?p=2)**
 
 ![](./lins_livox/pic/gdut_loop.png)
-
-
 
 ### 5. 参考资料
 
