@@ -127,7 +127,23 @@ private:
 
     Eigen::Quaternionf initImuMountAngle;
 
-    // Eigen::Affine3f Ext_Livox;
+    Eigen::Matrix<float, 18, 18> F_t;
+    Eigen::Matrix<float, 18, 12> G_t;
+    Eigen::Matrix<float, 18, 18> P_t;
+    Eigen::Matrix<float, 12, 12> noise_;
+    float residual_;
+    Eigen::Matrix<float, 1, 18> H_k;
+    float R_k;
+    Eigen::Matrix<float, 18, 1> K_k;
+    Eigen::Matrix<float, 18, 1> updateVec_;
+    Eigen::Matrix<float, 18, 1> errState;
+
+    // ug: micro-gravity force -- 9.81/(10^6)
+    double peba = pow(ACC_N * ug, 2);
+    double pebg = pow(GYR_N * dph, 2);
+    double pweba = pow(ACC_W * ugpsHz, 2);
+    double pwebg = pow(GYR_W * dpsh, 2);
+    Eigen::Vector3f gra_cov;
 
 public:
     // 构造函数
@@ -225,17 +241,28 @@ public:
         preTransformCurVy = 0.0;
         preTransformCurVz = 0.0;
 
-        // Ext_Livox.setIdentity();
-        // Eigen::Vector3f Ext_trans(ext_livox[0], ext_livox[1], ext_livox[2]);
-        // Eigen::AngleAxisf rollAngle(ext_livox[3], Eigen::Vector3f::UnitX());
-        // Eigen::AngleAxisf pitchAngle(ext_livox[4], Eigen::Vector3f::UnitY());
-        // Eigen::AngleAxisf yawAngle(ext_livox[5], Eigen::Vector3f::UnitZ()); 
-        // Eigen::Quaternionf quaternion;
-        // quaternion=yawAngle*pitchAngle*rollAngle;
-        // Ext_Livox.pretranslate(Ext_trans);
-        // Ext_Livox.rotate(quaternion);
+        F_t.setZero();
+        G_t.setZero();
+        P_t.setZero();
+        noise_.setZero();
+        // asDiagonal()指将向量作为对角线构建对角矩阵
+        noise_.block<3, 3>(0, 0) = Eigen::Vector3f(peba, peba, peba).asDiagonal();
+        noise_.block<3, 3>(3, 3) = Eigen::Vector3f(pebg, pebg, pebg).asDiagonal();
+        noise_.block<3, 3>(6, 6) = Eigen::Vector3f(pweba, pweba, pweba).asDiagonal();
+        noise_.block<3, 3>(9, 9) = Eigen::Vector3f(pwebg, pwebg, pwebg).asDiagonal();
+        residual_ = 0.0;
+        H_k.setZero();
+        R_k = 0.0;
+        K_k.setZero();
+        updateVec_.setZero();
+        errState.setZero();
+        gra_cov << 0.01, 0.01, 0.01;
 
-
+        #ifndef INITIAL_BY_IMU
+        Eigen::AngleAxisf imuPitch = Eigen::AngleAxisf(livox_mount_pitch, Eigen::Vector3f::UnitY());
+        Eigen::AngleAxisf imuRoll = Eigen::AngleAxisf(livox_mount_roll, Eigen::Vector3f::UnitX());
+        initImuMountAngle = imuRoll * imuPitch;
+        #endif
     }
     // 析构函数
     ~fusionOdometry(){}
@@ -604,10 +631,6 @@ public:
         laserCloudSurfLast2.header.frame_id = cloudHeader.frame_id;
         pubLaserCloudSurfLast.publish(laserCloudSurfLast2);
 
-        // transformSum[0] += imuPitchStart;
-        // transformSum[2] += imuRollStart;
-        // imuTime_last = pclInfoTime;
-
         status_ = STATUS_SECOND_SCAN;
 
         cloudHeaderLast = cloudHeader;
@@ -620,6 +643,7 @@ public:
         double imuTime = 0.0;
         myImu imuTmp;
         imuBuf.getFirstTime(imuTime);
+        #ifdef INITIAL_BY_IMU
         // 其实这里的IMU初始姿态选取有点粗暴，直接取了启动时第一个IMU数据计算姿态
         if(!initialImu)
         {
@@ -638,6 +662,7 @@ public:
             initImuMountAngle = imuRoll * imuPitch;
             initialImu = true;
         }
+        #endif
         while(imuTime <= pcl_time && !imuBuf.empty())
         {
             imuBuf.getFirstMeas(imuTmp);
@@ -650,13 +675,6 @@ public:
         {
             imuBuf.getFirstMeas(imuTmp);
             ImuBucket.emplace_back(imuTmp);
-
-            // std::cout<<"acc : "<<(initImuMountAngle*imuTmp.acc).transpose()<<std::endl;
-
-            // float pitch = atan2(-imuTmp.acc.x(), sqrt(imuTmp.acc.z()*imuTmp.acc.z() + imuTmp.acc.y()*imuTmp.acc.y()));
-            // std::cout<<"pitch : "<<pitch/PI*180.0<<std::endl;
-            // float roll = atan2(imuTmp.acc.y(), imuTmp.acc.z());
-            // std::cout<<"roll : "<<roll/PI*180.0<<std::endl;
         }
     }
 
@@ -704,9 +722,6 @@ public:
         updateTransformCur();
     }
 
-    void updateInitialGuess(){
-    }
-
     void TransformToStart(PointType const * const pi, PointType * const po)
     {
         // float s = 10 * (pi->intensity - int(pi->intensity));
@@ -724,11 +739,6 @@ public:
 
     void findCorrespondingCornerFeatures(int iterCount){
         int cornerPointsSharpNum = cornerPointsSharp->points.size();
-        // if(iterCount % 5 == 0)
-        // {
-        //     line_Cloud->clear();
-        //     line_point_Cloud->clear();
-        // }
         // 遍历当前帧的角点
         for(int i=0; i<cornerPointsSharpNum; i++)
         {
@@ -779,19 +789,6 @@ public:
                         last_point_a = 0.1 * unit_direction + point_on_line;
                         last_point_b = -0.1 * unit_direction + point_on_line; 
                         pointSearchCornerInd[i] = std::pair<Eigen::Vector3f, Eigen::Vector3f>(last_point_a, last_point_b);
-
-                        // if(iterCount % 5 == 0)
-                        // {pointSel.intensity = i;
-                        // line_point_Cloud->push_back(cornerPointsSharp->points[i]);
-                        // PointType point = pointSel;
-                        // point.x = last_point_a.x();
-                        // point.y = last_point_a.y();
-                        // point.z = last_point_a.z();
-                        // line_Cloud->push_back(point);
-                        // point.x = last_point_b.x();
-                        // point.y = last_point_b.y();
-                        // point.z = last_point_b.z();
-                        // line_Cloud->push_back(point);}
                     }
                 }
             }
@@ -997,17 +994,37 @@ public:
         dpitch = pitchCurr - pitchLast;
         dtz = dCurr-dLast;
 
+        preTransformCurrRx = (-droll+preTransformCurrRx)/2;
+        preTransformCurrRy = (-dpitch+preTransformCurrRy)/2;
+        preTransformCurTz = (-dtz+preTransformCurTz)/2;
+        updateTransformCur();
+        
+        planeEquLast = planeEqu;
+    }
+
+    void calculateTransformationGround_filter()
+    {
+        Eigen::Vector3f NormalCurr = planeEqu.block<3, 1>(0, 0);
+        float dLast = planeEqu(3, 0);
+        float pitchCurr = atan2(NormalCurr.x(), sqrt(1.0-NormalCurr.x()*NormalCurr.x()));
+        float rollCurr = atan2(NormalCurr.y(), NormalCurr.z());
+
+        Eigen::Vector3f NormalLast = planeEquLast.block<3, 1>(0, 0);
+        float dCurr = planeEquLast(3, 0);
+        float pitchLast = atan2(NormalLast.x(), sqrt(1.0-NormalLast.x()*NormalLast.x()));
+        float rollLast = atan2(NormalLast.y(), NormalLast.z());
+
+        // 更新
+        float droll, dpitch, dtz;
+        droll = rollCurr - rollLast;
+        dpitch = pitchCurr - pitchLast;
+        dtz = dCurr-dLast;
+
         preTransformCurrRx = -droll;
         preTransformCurrRy = -dpitch;
         preTransformCurTz = -dtz;
         updateTransformCur();
-        
-        // 更新preTransformCur
-        Eigen::AngleAxisf rollAngle = Eigen::AngleAxisf(droll, Eigen::Vector3f::UnitX());
-        Eigen::AngleAxisf pitchAngle = Eigen::AngleAxisf(dpitch, Eigen::Vector3f::UnitY());
-        preTransformCur.qbn_ = rollAngle * pitchAngle;
-        preTransformCur.qbn_.normalize();
-        preTransformCur.rn_.z() = dtz;
+
         // std::cout<<"roll = "<<droll/PI*180<<", pitch = "<<dpitch/PI*180<<", tz = "<<dtz<<std::endl;
 
         planeEquLast = planeEqu;
@@ -1045,12 +1062,145 @@ public:
         // std::cout<<"-----------------------------------------"<<std::endl;
         // 互补滤波
         // #define USE_COMPLEMENTLY_FILTER
-        #ifdef USE_COMPLEMENTLY_FILTER
-        float s = 0.5;
-        preTransformCur.rn_ = s*preTransformCur.rn_+(1-s)*preTransformCurImu.rn_;
-        preTransformCur.vn_ = s*preTransformCur.vn_+(1-s)*preTransformCurImu.vn_;
-        preTransformCur.qbn_ = preTransformCur.qbn_.slerp(0.5, preTransformCurImu.qbn_);
+        // #ifdef USE_COMPLEMENTLY_FILTER
+        // float s = 0.5;
+        // preTransformCur.rn_ = s*preTransformCur.rn_+(1-s)*preTransformCurImu.rn_;
+        // preTransformCur.vn_ = s*preTransformCur.vn_+(1-s)*preTransformCurImu.vn_;
+        // preTransformCur.qbn_ = preTransformCur.qbn_.slerp(0.5, preTransformCurImu.qbn_);
+        // #endif
+    }
+
+    bool calculateTransformationCorner_ieskf(int iterCount)
+    {
+        int pointSelNum = laserCloudOri->points.size();
+
+        double residualNorm = 1e6;
+        bool hasConverged = false;
+        bool hasDiverged = false;
+
+        float f_cost = 0.0;
+
+        Eigen::Vector3f v_pointOri_bk1;
+        H_k.setZero();
+
+        #ifdef UNUSE_IESKF
+        Eigen::Matrix<float, 18, 18> H;
+        H.setZero();
+        Eigen::Matrix<float, 18, 1> b;
+        b.setZero();
         #endif
+
+        for(int i=0; i<pointSelNum; i++)
+        {
+            // 当前点，在b_k+1坐标系
+            pointOri = laserCloudOri->points[i];
+            // 由当前点指向直线特征的垂线方向向量，其中intensity为距离值
+            coeff = coeffSel->points[i];
+            // 1. 计算G函数，通过估计的变换transformCur将pointOri转换到b_k坐标系
+            v_pointOri_bk1.x() = pointOri.x;
+            v_pointOri_bk1.y() = pointOri.y;
+            v_pointOri_bk1.z() = pointOri.z;
+            // v_pointOri_bk = q_transformCur.inverse() * v_pointOri_bk1 - v_transformCur;
+            // 2. dD/dG = (la, lb, lc)
+            Eigen::Matrix<float, 1, 3> dDdG;
+            dDdG << coeff.x, coeff.y, coeff.z;
+            // 3. 将transformCur转成R，然后计算(-Rp)^
+            Eigen::Matrix3f neg_Rp_sym;
+            // anti_symmetric(q_transformCur.toRotationMatrix()*v_pointOri_bk1, neg_Rp_sym);
+            // neg_Rp_sym = -neg_Rp_sym;
+            anti_symmetric(v_pointOri_bk1, neg_Rp_sym);
+            neg_Rp_sym = -preTransformCur.qbn_.toRotationMatrix()*neg_Rp_sym;
+            // 4. 计算(dD/dG)*(-Rp)^得到关于旋转的雅克比，取其中的yaw部分，记为j_yaw
+            Eigen::Matrix<float, 1, 3> dDdR = dDdG * neg_Rp_sym;
+            
+            #ifdef UNUSE_IESKF
+            H_k.block<1, 3>(0, pos_) = dDdG;
+            H_k.block<1, 3>(0, att_) = dDdR;
+
+            f_cost = 0.05 * coeff.intensity;
+
+            b = b - f_cost*H_k.transpose();
+            H = H + H_k.transpose()*H_k;
+            #else
+            H_k.block<1, 3>(0, pos_) += dDdG;
+            H_k.block<1, 3>(0, att_) += dDdR;
+
+            f_cost += 0.02 * coeff.intensity;
+            #endif
+        }
+
+        #ifdef UNUSE_IESKF
+        updateVec_ = -K_k*(f_cost-H_k*errState)-errState;
+        updateVec_ = H.colPivHouseholderQr().solve(b);
+        #else
+        K_k = P_t*H_k.transpose()*(1/(H_k*P_t*H_k.transpose()+LIDAR_STD));
+        updateVec_ = K_k*(H_k*errState - f_cost)-errState;
+        #endif
+
+        // Divergence determination
+        // 迭代发散判断
+        bool hasNaN = false;
+        for (int i = 0; i < updateVec_.size(); i++) {
+            if (isnan(updateVec_[i])) {
+                updateVec_[i] = 0;
+                hasNaN = true;
+            }
+        }
+        if (hasNaN == true) {
+            ROS_WARN("System diverges Because of NaN...");
+            hasDiverged = true;
+            return false;
+        }
+        // Check whether the filter converges
+        // 检查滤波器是否迭代收敛
+        if (f_cost > residualNorm * 10) {
+            ROS_WARN("System diverges...");
+            hasDiverged = true;
+            return false;
+        }
+
+        errState += updateVec_;
+        preTransformCurrRz += updateVec_(att_+2, 0);
+        preTransformCurTx += updateVec_(pos_, 0);
+        preTransformCurTy += updateVec_(pos_+1, 0);
+        updateTransformCur();
+
+        float deltaR = sqrt(pow(rad2deg(updateVec_(att_+2, 0)), 2));
+        float deltaT = sqrt( pow(updateVec_(pos_, 0) * 100, 2) +
+                                pow(updateVec_(pos_+1, 0) * 100, 2));
+
+        if (deltaR < 0.1 && deltaT < 0.1) {
+            return false;
+        }
+
+        return true; 
+    }
+
+    void updateTransformation_ieskf()
+    {
+        if (laserCloudCornerLastNum < 10 || laserCloudSurfLastNum < 100)
+            return;
+
+        // 互补滤波，计算roll, pitch, 和z并且更新
+        calculateTransformationGround_filter();
+
+        pointSearchCornerInd.clear();
+        errState.setZero();
+        for (int iterCount2 = 0; iterCount2 < 25; iterCount2++) {
+            laserCloudOri->clear();
+            coeffSel->clear();
+
+            // 计算dD/dG
+            findCorrespondingCornerFeatures(iterCount2);
+
+            if (laserCloudOri->points.size() < 10)
+                continue;
+            // 通过角/边特征的匹配，计算变换矩阵
+            if (calculateTransformationCorner_ieskf(iterCount2) == false)
+                break;
+        }
+        P_t = (Eigen::Matrix<float, 18, 18>::Identity()-K_k*H_k)*P_t*(Eigen::Matrix<float, 18, 18>::Identity()-K_k*H_k).transpose()+
+                R_k*K_k*K_k.transpose();
     }
 
     // 旋转角的累计变化量
@@ -1126,20 +1276,74 @@ public:
             laserCloudSurfLast2.header.stamp = cloudHeader.stamp;
             laserCloudSurfLast2.header.frame_id = "/livox";
             pubLaserCloudSurfLast.publish(laserCloudSurfLast2);
-
-            // sensor_msgs::PointCloud2 line_point_msg;
-            // pcl::toROSMsg(*line_point_Cloud, line_point_msg);
-            // line_point_msg.header.stamp = cloudHeader.stamp;
-            // line_point_msg.header.frame_id = "/livox";
-            // pubLaserCloud_line_point.publish(line_point_msg);
-
-            // pcl::toROSMsg(*line_Cloud, line_point_msg);
-            // line_point_msg.header.stamp = cloudHeader.stamp;
-            // line_point_msg.header.frame_id = "/livox";
-            // pubLaserCloud_line.publish(line_point_msg);
         }
 
         cloudHeaderLast = cloudHeader;
+    }
+
+
+    // 滤波器的预测
+    void filter_predict()
+    {
+        getImuBucket(pclInfoTime);
+        // std::cout<<"ImuBucket : "<<ImuBucket.size()<<std::endl;
+        double imuTime_last = ImuBucket[0].timestamp_s;
+        double dt = 0.0;
+        FilterState state_tmp = TransformSum;
+        // 加速度转到世界系
+        // ImuBucket[0].acc = Ext_Livox.rotation() * ImuBucket[0].acc;
+        Eigen::Vector3f un_acc_last = state_tmp.qbn_*initImuMountAngle*(ImuBucket[0].acc-state_tmp.ba_)+state_tmp.gn_;
+        Eigen::Vector3f un_gyr_last = ImuBucket[0].gyr - state_tmp.bw_;
+        Eigen::Vector3f un_acc_next;
+        Eigen::Vector3f un_gyr_next;
+        for(int i=1; i<ImuBucket.size(); i++)
+        {
+            dt = ImuBucket[i].timestamp_s - imuTime_last;
+            // 加速度转到世界系
+            // ImuBucket[i].acc = Ext_Livox.rotation() * ImuBucket[i].acc;
+            un_acc_next = state_tmp.qbn_*initImuMountAngle*(ImuBucket[i].acc-state_tmp.ba_)+state_tmp.gn_;
+            un_gyr_next = ImuBucket[i].gyr - state_tmp.bw_;
+
+            Eigen::Vector3f un_acc = 0.5*(un_acc_last + un_acc_next); // world frame
+            Eigen::Vector3f un_gyr = 0.5*(un_gyr_last + un_gyr_next);
+            // 求角度变化量，再转化成四元数形式
+            Eigen::Quaternionf dq = axis2Quat(un_gyr * dt);
+            // 求当前临时状态量中的姿态
+            state_tmp.qbn_ = (state_tmp.qbn_*dq).normalized();
+
+            state_tmp.vn_ = state_tmp.vn_ + un_acc*dt; // world frame
+            state_tmp.rn_ = state_tmp.rn_ + state_tmp.vn_*dt + un_acc*dt*dt; // world frame
+
+            imuTime_last = ImuBucket[i].timestamp_s;
+            un_acc_last = un_acc_next;
+            un_gyr_last = un_gyr_next;
+
+            preTransformCurImu.rn_ = state_tmp.qbn_.inverse()*(state_tmp.rn_-TransformSumLast.rn_);
+            preTransformCurImu.vn_ = state_tmp.qbn_.inverse()*state_tmp.vn_;
+            preTransformCurImu.qbn_ = (state_tmp.qbn_ * TransformSumLast.qbn_.inverse()).normalized();
+            preTransformCur = preTransformCurImu;
+            updateTransformCurTmp();
+            updateTransformCur();
+
+            F_t.setZero();
+            F_t.block<3, 3>(pos_, vel_) = Eigen::Matrix<float, 3, 3>::Identity();
+            F_t.block<3, 3>(vel_, att_) = -preTransformCurImu.qbn_.toRotationMatrix()*anti_symmetric(ImuBucket[i].acc-state_tmp.ba_);
+            F_t.block<3, 3>(vel_, acc_) = -preTransformCurImu.qbn_.toRotationMatrix();
+            F_t.block<3, 3>(vel_, gra_) = Eigen::Matrix<float, 3, 3>::Identity();
+            F_t.block<3, 3>(att_, att_) = -anti_symmetric(ImuBucket[i].gyr - state_tmp.bw_);
+            F_t.block<3, 3>(att_, gyr_) = -Eigen::Matrix<float, 3, 3>::Identity();
+
+            G_t.setZero();
+            G_t.block<3, 3>(vel_, 0) = -preTransformCurImu.qbn_.toRotationMatrix();
+            G_t.block<3, 3>(att_, 3) = -Eigen::Matrix<float, 3, 3>::Identity();
+            G_t.block<3, 3>(acc_, 6) = Eigen::Matrix<float, 3, 3>::Identity();
+            G_t.block<3, 3>(gyr_, 9) = Eigen::Matrix<float, 3, 3>::Identity();
+
+            Eigen::Matrix<float, 18, 18> F_;
+            F_ = Eigen::Matrix<float, 18, 18>::Identity() + dt*F_t;
+            errState = F_ * errState;
+            P_t = F_ * P_t * F_.transpose() + (dt*G_t) * noise_ * (dt*G_t).transpose();
+        }
     }
 
     void clearCloud()
@@ -1179,12 +1383,6 @@ public:
                 break;
             case STATUS_FIRST_SCAN:
             {
-            // 一. 处理第一帧
-            // 1. 对齐IMU Buf中的消息
-            // 2. 对地面点云进行降采样
-            // 3. 提取特征点
-            // 4. 构建KD树
-            // 5. 初始化滤波器的参数：帧间变换x，误差状态dx，F,G,P,K,H,R,delta_x
                 alignFirstIMUtoPCL();
                 DownSizeGroudCloud();
                 calculateSmoothness();
@@ -1196,11 +1394,6 @@ public:
             }
             case STATUS_SECOND_SCAN:
             {
-            // 二. 处理第二帧
-            // 1. 去除一管IMU消息，进行积分
-            // 2. IMU积分得到的变换作为初值，进行纯点云匹配
-            // 3. 将点云匹配得到的变换关系作为滤波器初值，配置滤波器的参数
-            // 4. 利用前面的帧间位姿变换矫正点云的运动畸变，这里的前提是假设它是匀速运动模型
                 #ifdef USE_COMPLEMENTLY_FILTER
                 prediction();
                 #endif
@@ -1209,14 +1402,24 @@ public:
                 markOccludedPoints();
                 extractFeatures();
                 publishCloud();
-                // preTransformCur = TransformSum;
                 updateTransformation();
                 integrateTransformation();
                 publishOdometry();
                 publishCloudsLast();
+                status_ = STATUS_RUNNING;
                 break;
             }
             case STATUS_RUNNING:
+                filter_predict();
+                DownSizeGroudCloud();
+                calculateSmoothness();
+                markOccludedPoints();
+                extractFeatures();
+                publishCloud();
+                updateTransformation_ieskf();
+                integrateTransformation();
+                publishOdometry();
+                publishCloudsLast();
                 break;
             case STATUS_RESET:
                 break;
@@ -1229,15 +1432,6 @@ public:
             pclGndBuf.clean(pclInfoTime);
             planeBuf.clean(pclInfoTime);
             imuBuf.clean(pclInfoTime);
-            // std::cout<<pclBuf.getSize()<<", "<<imuBuf.getSize()<<std::endl;
-            // 三. 处理后续帧
-            // 1. 去除一管IMU消息，进行积分
-            // 2. 运动畸变矫正
-            // 3. 对地面点云进行降采样
-            // 4. 提取特征点
-            // 5. 基于IMU测量进行预测
-            // 6. 寻找特征匹配，计算测量残差和滤波器的参数，实现迭代校正
-            // 7. 判断是否发散，如果发散的话使用ICP
         }
         else{
             return;

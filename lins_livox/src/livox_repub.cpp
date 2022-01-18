@@ -116,7 +116,7 @@ void LivoxMsgCbk1(const livox_ros_driver::CustomMsgConstPtr& livox_msg_in) {
 // 订阅IMU
 void imuHandler(const sensor_msgs::Imu::ConstPtr& imuIn)
 {
-    Ext_Livox;
+    #ifdef INITIAL_BY_IMU
     if(!initialImu)
     {
         // float imupitch_ = atan2(-imuIn->linear_acceleration.x, 
@@ -134,6 +134,7 @@ void imuHandler(const sensor_msgs::Imu::ConstPtr& imuIn)
         // Ext_Livox.pretranslate();
         initialImu = true;
     }
+    #endif
 }
 
 int main(int argc, char** argv) {
@@ -142,14 +143,11 @@ int main(int argc, char** argv) {
 
   ROS_INFO("start livox_repub");
 
-  // Eigen::Vector3f Ext_trans(ext_livox[0], ext_livox[1], ext_livox[2]);
-  // Eigen::AngleAxisf rollAngle(ext_livox[3], Eigen::Vector3f::UnitX());
-  // Eigen::AngleAxisf pitchAngle(ext_livox[4], Eigen::Vector3f::UnitY());
-  // Eigen::AngleAxisf yawAngle(ext_livox[5], Eigen::Vector3f::UnitZ()); 
-  // Eigen::Quaternionf quaternion;
-  // quaternion=yawAngle*pitchAngle*rollAngle;
-  // Ext_Livox.pretranslate(Ext_trans);
-  // Ext_Livox.rotate(quaternion);
+  #ifndef INITIAL_BY_IMU
+  Eigen::AngleAxisf imuPitch = Eigen::AngleAxisf(livox_mount_pitch, Eigen::Vector3f::UnitY());
+  Eigen::AngleAxisf imuRoll = Eigen::AngleAxisf(livox_mount_roll, Eigen::Vector3f::UnitX());
+  Ext_Livox.rotate(imuRoll * imuPitch);
+  #endif
 
   ros::Subscriber sub_livox_msg1 = nh.subscribe<livox_ros_driver::CustomMsg>(
       "/livox/lidar", 100, LivoxMsgCbk1);

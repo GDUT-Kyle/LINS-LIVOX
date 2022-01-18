@@ -111,6 +111,9 @@ extern const float ang_res_y = 2.0;
 extern const float ang_bottom = 15.0+0.1;
 extern const int groundScanInd = 7;
 
+extern const float livox_mount_pitch = 0.00;
+extern const float livox_mount_roll = 0.00;
+
 extern const float livox_height = 0.77;
 extern const int num_lpr = 20;
 extern const float th_seeds = 0.5;
@@ -141,19 +144,47 @@ extern const float nearestFeatureSearchSqDist = 25;
 extern const float surroundingKeyframeSearchRadius = 50.0;
 extern const int   surroundingKeyframeSearchNum = 50;
 
-extern const double acc_n = 0.08;
-extern const double gyr_n = 0.004;
-extern const double acc_w = 2.0e-4;
-extern const double gyr_w = 2.0e-5;
-extern const double lidar_m = 1.5e-3;
 extern const float gnorm = 9.805;
 
 extern const float historyKeyframeSearchRadius = 40.0;
 extern const int   historyKeyframeSearchNum = 25;
 extern const float historyKeyframeFitnessScore = 0.8;
 
-void anti_symmetric(Eigen::Vector3d const &_v, Eigen::Matrix3d &_m)
+// 各变量的首元素索引值
+static constexpr unsigned int pos_ = 0;
+static constexpr unsigned int vel_ = 3;
+static constexpr unsigned int att_ = 6;
+static constexpr unsigned int acc_ = 9;
+static constexpr unsigned int gyr_ = 12;
+static constexpr unsigned int gra_ = 15;
+
+/*!@EARTH COEFFICIENTS */
+extern const double G0 = gnorm;                  // gravity
+extern const double deg = M_PI / 180.0;         // degree
+extern const double rad = 180.0 / M_PI;         // radian
+extern const double dph = deg / 3600.0;         // degree per hour
+extern const double dpsh = deg / sqrt(3600.0);  // degree per square-root hour
+extern const double mg = G0 / 1000.0;           // mili-gravity force
+extern const double ug = mg / 1000.0;           // micro-gravity force
+extern const double mgpsHz = mg / sqrt(1.0);    // mili-gravity force per second
+extern const double ugpsHz = ug / sqrt(1.0);    // micro-gravity force per second
+extern const double Re = 6378137.0;             ///< WGS84 Equatorial radius in meters
+extern const double Rp = 6356752.31425;
+extern const double Ef = 1.0 / 298.257223563;
+extern const double Wie = 7.2921151467e-5;
+extern const double Ee = 0.0818191908425;
+extern const double EeEe = Ee * Ee;
+
+extern const double ACC_N = 70000;
+extern const double ACC_W = 500;
+extern const double GYR_N = 0.1;
+extern const double GYR_W = 0.05;
+
+extern const float LIDAR_STD = 0.01;
+
+Eigen::Matrix3f anti_symmetric(Eigen::Vector3f const &_v)
 {
+    Eigen::Matrix3f _m;
     _m(0, 0) = 0.0;
     _m(0, 1) = -_v.z();
     _m(0, 2) = _v.y();
@@ -163,6 +194,7 @@ void anti_symmetric(Eigen::Vector3d const &_v, Eigen::Matrix3d &_m)
     _m(2, 0) = -_v.y();
     _m(2, 1) = _v.x();
     _m(2, 2) = 0.0;
+    return _m;
 }
 
 void anti_symmetric(Eigen::Vector3f const &_v, Eigen::Matrix3f &_m)
